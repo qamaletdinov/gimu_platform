@@ -44,6 +44,11 @@ const routes = [
     name: 'Login',
     component: () => import('@/views/Login.vue'),
   },
+  {
+    path: '/register', // <-- ДОБАВЛЕН НОВЫЙ МАРШРУТ
+    name: 'Register',
+    component: () => import('@/views/Register.vue'),
+  },
 ]
 
 const router = createRouter({
@@ -53,7 +58,7 @@ const router = createRouter({
 
 router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('token');
-  if (to.name !== 'Login' && !token) {
+  if (to.name !== 'Login' && to.name !== 'Register' && !token) { // <-- ИЗМЕНЕНО: Разрешаем доступ к /register без токена
     next({ name: 'Login' });
   } else {
     next();
