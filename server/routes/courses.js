@@ -63,11 +63,9 @@ router.post('/:courseId/upload', protect, authorize('teacher', 'admin'), upload.
     const numericCourseId = parseInt(courseId, 10);
     const newFileRecord = { id: rows[0].id, course_id: numericCourseId, file_name: decodedFilename };
 
-    indexFile(newFileRecord, req.file.buffer).catch(err => {
-      console.error(`[VectorDB] Failed to index file ${newFileRecord.id}:`, err);
-    });
+    await indexFile(newFileRecord, req.file.buffer);
 
-    res.status(201).json({ message: 'File processed from memory and scheduled for indexing.', file: newFileRecord });
+    res.status(201).json({ message: 'File indexed successfully.', file: newFileRecord });
   } catch (error) {
     res.status(500).json({ error: 'Failed to save file metadata.' });
   }

@@ -5,15 +5,28 @@ const { LOCAL_AI_URL, CHAT_MODEL } = require('./config.js');
 const cleanText = (text) => text.replace(/```json/g, '').replace(/```/g, '').trim();
 
 async function generateWithOllama(prompt) {
+  console.log(`[AI Agent] Sending request to ${LOCAL_AI_URL}/api/chat (Model: ${CHAT_MODEL})`);
+  console.log(`[AI Agent] Prompt length: ${prompt.length} chars`);
+  const start = Date.now();
+  
   try {
     const response = await axios.post(`${LOCAL_AI_URL}/api/chat`, {
       model: CHAT_MODEL,
       messages: [{ role: 'user', content: prompt }],
       stream: false,
+    }, {
+      timeout: 90000 // 90 seconds timeout
     });
+    
+    const duration = Date.now() - start;
+    console.log(`[AI Agent] Received response in ${duration}ms`);
     return response.data.message.content;
   } catch (error) {
-    console.error(`Error communicating with local AI at ${LOCAL_AI_URL}:`, error.message);
+    const duration = Date.now() - start;
+    console.error(`[AI Agent] Error communicating with local AI after ${duration}ms:`, error.message);
+    if (error.code === 'ECONNABORTED') {
+        console.error(`[AI Agent] Request timed out.`);
+    }
     throw new Error('Failed to get response from local AI server.');
   }
 }
@@ -76,7 +89,14 @@ async function generateExamAnswers(questionsText, courseId) {
   const questions = questionsText.split('\n').filter(q => q.trim().length > 5);
   const answers = [];
   for (const question of questions) {
-    const relevantChunks = await queryByText(question, courseId);
+    let relevantChunks;
+    try {
+      relevantChunks = await queryByText(question, courseId);
+    } catch (error) {
+      console.error(`Error querying vector DB for question "${question}":`, error);
+      relevantChunks = []; // Proceed as if no chunks were found
+    }
+
     let answerText = '';
     if (!relevantChunks || relevantChunks.length === 0) {
       answerText = "Не удалось найти релевантную информацию в материалах курса для ответа на этот вопрос.";
@@ -105,7 +125,14 @@ async function generateExamAnswers(questionsText, courseId) {
 }
 
 async function processHomework(description, courseId) {
-  const relevantChunks = await queryByText(description, courseId);
+  let relevantChunks;
+  try {
+    relevantChunks = await queryByText(description, courseId);
+  } catch (error) {
+    console.error(`Error querying vector DB for homework "${description}":`, error);
+    return "Произошла ошибка при поиске информации в материалах курса. Пожалуйста, попробуйте позже.";
+  }
+
   if (!relevantChunks || relevantChunks.length === 0) {
     return "К сожалению, я не смог найти релевантную информацию в материалах курса, чтобы ответить на ваш вопрос. Попробуйте переформулировать его.";
   }

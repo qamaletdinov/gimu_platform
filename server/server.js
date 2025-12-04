@@ -32,7 +32,13 @@ app.get('/api/courses/:courseId/materials', async (req, res) => {
   const { courseId } = req.params;
   try {
     const client = new ChromaClient();
-    const collection = await client.getCollection({ name: "gimu_collection" });
+    let collection;
+    try {
+      collection = await client.getCollection({ name: "gimu_collection" });
+    } catch (e) {
+      return res.status(404).json({ error: 'No materials found for this course (Collection missing).' });
+    }
+    
     const results = await collection.get({ where: { "courseId": parseInt(courseId, 10) } });
 
     if (!results || results.documents.length === 0) {
@@ -40,7 +46,17 @@ app.get('/api/courses/:courseId/materials', async (req, res) => {
     }
     
     const combinedContent = results.documents.join('\n\n---\n\n');
-    const summary = await summarizeText(combinedContent);
+    console.log(`[Materials RAG] Combined content length for course ${courseId}: ${combinedContent.length}`);
+    // console.log(`[Materials RAG] Combined content sample: ${combinedContent.substring(0, 500)}`); // Uncomment if needed for deeper debug
+    
+    let summary;
+    try {
+        summary = await summarizeText(combinedContent);
+        console.log(`[Materials RAG] Summary snippet for course ${courseId}: ${summary.substring(0, 200)}...`);
+    } catch (summarizeError) {
+        console.error(`[Materials RAG] Error during summarizeText for course ${courseId}:`, summarizeError);
+        throw summarizeError; // Re-throw to be caught by the outer catch block
+    }
     res.json({ content: summary });
 
   } catch (error) {
@@ -53,7 +69,13 @@ app.get('/api/courses/:courseId/quiz', async (req, res) => {
     const { courseId } = req.params;
     try {
         const client = new ChromaClient();
-        const collection = await client.getCollection({ name: "gimu_collection" });
+        let collection;
+        try {
+            collection = await client.getCollection({ name: "gimu_collection" });
+        } catch (e) {
+            return res.status(404).json({ error: 'No materials found for this course to generate a quiz (Collection missing).' });
+        }
+
         const results = await collection.get({ where: { "courseId": parseInt(courseId, 10) } });
 
         if (!results || results.documents.length === 0) {
@@ -99,6 +121,6 @@ app.post('/api/exams/prepare', upload.single('questionsFile'), async (req, res) 
 });
 
 
-app.listen(port, () => {
-  console.log(`Server is running on http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server is running...`);
 });
