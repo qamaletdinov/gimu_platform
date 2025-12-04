@@ -88,8 +88,6 @@ async function generateQuiz(text) {
 async function generateExamTest(questionsText, courseId) {
   const { GoogleGenerativeAI } = require('@google/generative-ai');
   const db = require('./db/index.js');
-  const fs = require('fs').promises;
-  const path = require('path');
 
   const questions = questionsText.split('\n').filter(q => q.trim().length > 5);
   const testQuestions = [];

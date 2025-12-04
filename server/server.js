@@ -124,11 +124,6 @@ app.post('/api/exams/prepare', upload.single('questionsFile'), async (req, res) 
     }
 });
 
-<<<<<<< HEAD
-
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Server is running...`);
-=======
 app.post('/api/exams/generate-test', upload.single('questionsFile'), async (req, res) => {
     const { courseId } = req.body;
     if (!req.file || !courseId) {
@@ -178,5 +173,4 @@ app.listen(port, async () => {
   } else {
     console.log('ℹ️  Чат-бот: автозагрузка отключена. Используйте: node scripts/load-chatbot-data.js <файл.csv>');
   }
->>>>>>> 6210dedd02adf46f8a49a1b207bd9ad33129de10
 });
