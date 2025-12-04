@@ -9,8 +9,11 @@ const multer = require('multer');
 const db = require('./db/index.js');
 const authRoutes = require('./routes/auth.js');
 const courseRoutes = require('./routes/courses.js');
-const { summarizeText, generateQuiz, processHomework, generateExamAnswers } = require('./aiAgent.js');
+const chatbotRoutes = require('./routes/chatbot.js');
+const politicianChatbot = require('./politicianChatbot.js');
+const { summarizeText, generateQuiz, processHomework, generateExamAnswers, generateExamTest, checkExamAnswers } = require('./aiAgent.js');
 const { ChromaClient } = require('chromadb');
+const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3001; // Используем порт из .env или 3001
@@ -23,6 +26,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
+app.use('/api/chatbot', chatbotRoutes);
 
 app.get('/', (req, res) => {
   res.send('GIMU Platform Backend is running.');
@@ -98,7 +102,53 @@ app.post('/api/exams/prepare', upload.single('questionsFile'), async (req, res) 
     }
 });
 
+app.post('/api/exams/generate-test', upload.single('questionsFile'), async (req, res) => {
+    const { courseId } = req.body;
+    if (!req.file || !courseId) {
+        return res.status(400).json({ error: 'File and course ID are required.' });
+    }
+    const questionsText = req.file.buffer.toString('utf-8');
+    try {
+        console.log(`📝 Генерация теста для курса ${courseId}...`);
+        const testQuestions = await generateExamTest(questionsText, courseId);
+        console.log(`✅ Сгенерировано ${testQuestions.length} вопросов для теста`);
+        res.json(testQuestions);
+    } catch (error) {
+        console.error('Detailed error in /api/exams/generate-test:', error);
+        res.status(500).json({ error: 'Failed to generate test.' });
+    }
+});
 
-app.listen(port, () => {
+app.post('/api/exams/check-answers', async (req, res) => {
+    const { userAnswers, correctAnswers } = req.body;
+    if (!userAnswers || !correctAnswers) {
+        return res.status(400).json({ error: 'User answers and correct answers are required.' });
+    }
+    try {
+        const results = await checkExamAnswers(userAnswers, correctAnswers);
+        res.json(results);
+    } catch (error) {
+        console.error('Error in /api/exams/check-answers:', error);
+        res.status(500).json({ error: 'Failed to check answers.' });
+    }
+});
+
+
+app.listen(port, async () => {
   console.log(`Server is running on http://localhost:${port}`);
+
+  // Автозагрузка данных чат-бота, если настроено в .env
+  if (process.env.CHATBOT_AUTOLOAD === 'true' && process.env.CHATBOT_CSV_FILE) {
+    console.log('🤖 Автозагрузка данных чат-бота...');
+    try {
+      const csvPath = path.join(__dirname, 'storage', process.env.CHATBOT_CSV_FILE);
+      const count = await politicianChatbot.loadTelegramData(csvPath);
+      console.log(`✅ Чат-бот загружен: ${count} сообщений`);
+    } catch (error) {
+      console.error('❌ Ошибка автозагрузки чат-бота:', error.message);
+      console.log('💡 Вы можете загрузить данные вручную: node scripts/load-chatbot-data.js');
+    }
+  } else {
+    console.log('ℹ️  Чат-бот: автозагрузка отключена. Используйте: node scripts/load-chatbot-data.js <файл.csv>');
+  }
 });
