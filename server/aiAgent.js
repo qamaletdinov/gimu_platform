@@ -85,6 +85,176 @@ async function generateQuiz(text) {
   }
 }
 
+async function generateExamTest(questionsText, courseId) {
+  const { GoogleGenerativeAI } = require('@google/generative-ai');
+  const db = require('./db/index.js');
+  const fs = require('fs').promises;
+  const path = require('path');
+
+  const questions = questionsText.split('\n').filter(q => q.trim().length > 5);
+  const testQuestions = [];
+
+  for (const question of questions) {
+    let context = '';
+    let relevantChunks = [];
+
+    // Пробуем получить контекст через RAG (векторная БД)
+    try {
+      relevantChunks = await queryByText(question, courseId);
+      if (relevantChunks && relevantChunks.length > 0) {
+        context = relevantChunks.join("\n\n---\n\n");
+        console.log(`✅ Контекст получен через RAG для вопроса: ${question.substring(0, 50)}...`);
+      }
+    } catch (ragError) {
+      console.log(`⚠️ RAG недоступен, используем fallback для: ${question.substring(0, 50)}...`);
+    }
+
+    // Fallback: если RAG не сработал, читаем материалы курса из файлов
+    if (!context) {
+      try {
+        const materials = await db.all(
+          'SELECT content FROM materials WHERE course_id = ?',
+          [courseId]
+        );
+
+        if (materials && materials.length > 0) {
+          // Берем все материалы курса
+          context = materials.map(m => m.content).join('\n\n---\n\n');
+          console.log(`📚 Контекст получен из БД для вопроса: ${question.substring(0, 50)}...`);
+        } else {
+          console.log(`⚠️ Нет материалов для курса ${courseId}`);
+          continue;
+        }
+      } catch (dbError) {
+        console.error(`❌ Ошибка чтения материалов из БД:`, dbError.message);
+        continue;
+      }
+    }
+
+    if (!context) {
+      console.log(`⚠️ Нет контекста для вопроса: ${question}`);
+      continue;
+    }
+
+    const prompt = `Ты — эксперт по созданию экзаменационных тестов. На основе учебного материала создай тестовый вопрос.
+
+📚 УЧЕБНЫЙ МАТЕРИАЛ:
+${context.substring(0, 3000)} 
+
+❓ ЭКЗАМЕНАЦИОННЫЙ ВОПРОС:
+"${question}"
+
+🎯 ЗАДАЧА:
+Создай тестовый вопрос с 4 вариантами ответа (A, B, C, D), где ТОЛЬКО ОДИН правильный.
+
+📋 ТРЕБОВАНИЯ:
+1. Правильный ответ должен быть основан СТРОГО на материале выше
+2. Неправильные варианты должны быть правдоподобными, но ошибочными
+3. Все варианты должны быть примерно одинаковой длины
+4. Формат ответа - СТРОГО JSON
+
+ФОРМАТ ОТВЕТА (JSON):
+{
+  "question": "Переформулированный вопрос для теста",
+  "options": {
+    "A": "Первый вариант ответа",
+    "B": "Второй вариант ответа",
+    "C": "Третий вариант ответа",
+    "D": "Четвертый вариант ответа"
+  },
+  "correct": "A",
+  "explanation": "Краткое объяснение почему этот ответ правильный"
+}
+
+ВЕРНИ ТОЛЬКО JSON, БЕЗ ДОПОЛНИТЕЛЬНОГО ТЕКСТА:`;
+
+    try {
+      let result;
+
+      // Пробуем использовать Gemini
+      if (process.env.GEMINI_API_KEY) {
+        try {
+          const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+          const model = genAI.getGenerativeModel({
+            model: 'gemini-2.0-flash-exp',
+            generationConfig: {
+              temperature: 0.7,
+              topP: 0.95,
+            }
+          });
+
+          const geminiResult = await model.generateContent(prompt);
+          const geminiResponse = await geminiResult.response;
+          result = geminiResponse.text().trim();
+          console.log(`🔷 Тест сгенерирован через Gemini`);
+        } catch (geminiError) {
+          console.log('⚠️ Gemini недоступен, используем Ollama');
+          result = await generateWithOllama(prompt);
+          console.log(`🟠 Тест сгенерирован через Ollama`);
+        }
+      } else {
+        result = await generateWithOllama(prompt);
+        console.log(`🟠 Тест сгенерирован через Ollama`);
+      }
+
+      // Очищаем JSON от markdown
+      const cleaned = cleanText(result);
+      const testQuestion = JSON.parse(cleaned);
+
+      testQuestions.push({
+        id: testQuestions.length + 1,
+        originalQuestion: question,
+        ...testQuestion
+      });
+
+      console.log(`✅ Вопрос ${testQuestions.length} добавлен в тест`);
+
+    } catch (error) {
+      console.error(`❌ Ошибка генерации теста для вопроса "${question}":`, error.message);
+    }
+  }
+
+  console.log(`✅ Тест готов: ${testQuestions.length} вопросов`);
+  return testQuestions;
+}
+
+async function checkExamAnswers(userAnswers, correctAnswers) {
+  const results = [];
+  let totalScore = 0;
+  const maxScore = correctAnswers.length;
+
+  for (let i = 0; i < correctAnswers.length; i++) {
+    const correctAnswer = correctAnswers[i];
+    const userAnswer = userAnswers.find(ua => ua.id === correctAnswer.id);
+
+    const isCorrect = userAnswer && userAnswer.answer === correctAnswer.correct;
+
+    results.push({
+      id: correctAnswer.id,
+      question: correctAnswer.question,
+      userAnswer: userAnswer ? userAnswer.answer : null,
+      correctAnswer: correctAnswer.correct,
+      isCorrect: isCorrect,
+      options: correctAnswer.options,
+      explanation: correctAnswer.explanation
+    });
+
+    if (isCorrect) {
+      totalScore++;
+    }
+  }
+
+  const percentage = Math.round((totalScore / maxScore) * 100);
+
+  return {
+    results,
+    totalScore,
+    maxScore,
+    percentage,
+    passed: percentage >= 60 // 60% для сдачи
+  };
+}
+
 async function generateExamAnswers(questionsText, courseId) {
   const questions = questionsText.split('\n').filter(q => q.trim().length > 5);
   const answers = [];
@@ -158,5 +328,7 @@ module.exports = {
   summarizeText, 
   generateQuiz, 
   generateExamAnswers,
+  generateExamTest,
+  checkExamAnswers,
   processHomework
 };

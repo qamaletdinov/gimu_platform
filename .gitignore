@@ -47,3 +47,5 @@ Thumbs.db
 build/
 .cache/
 
+gimu.db*
+
